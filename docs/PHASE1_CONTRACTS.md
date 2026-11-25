@@ -9,8 +9,8 @@ This document satisfies the **Phase 1 exit criteria** of [MOBILE_IMPLEMENTATION_
 | Item | Decision / Status | Notes |
 | --- | --- | --- |
 | **Mobile Stack** | **Kotlin (Native Android)** | CameraX + ML Kit Face Detection (on-device blur), Coroutines/StateFlow, `kotlinx.serialization`, Foreground Service + `WakeLock`. |
-| **Target Handset & OS** | *To be filled after handset check* | Record exact phone model, Android API level, and RAM before Phase 3/5. |
-| **ESP32 Transport** | **Primary: Wi-Fi WebSocket (local AP) or BLE GATT; Fallback: USB OTG Serial** | Must be verified under screen lock and app backgrounding on the target handset. |
+| **Target Handset & OS** | **OnePlus Nord N10 5G (6 GB RAM, Android / OxygenOS)** | Recorded for Phase 1; disable OxygenOS battery optimization for the ROVA app so Foreground Service + BLE/USB stay alive under screen lock. |
+| **ESP32 Transport** | **Primary: BLE GATT; Wired Alternative/Fallback: USB-C OTG Serial** | OnePlus Nord N10 supports USB Host (OTG) over USB-C (`usb-serial-for-android` for CP2102/CH340/CDC). Both sit behind a single `Esp32Transport` interface in Kotlin. |
 | **Cloud AI Route** | **Phone → Backend Proxy → Provider** | Provider keys (`NEBIUS_API_KEY`, `NVIDIA_API_KEY`) stay on the FastAPI backend; the phone authenticates only with the backend. |
 
 ### Handset Evaluation Checklist (Run on Target Phone)
