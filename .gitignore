@@ -1,0 +1,43 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# ESP32 / PlatformIO / Arduino
+.pio/
+firmware/build/
+
+# Mobile (Android / Flutter / React Native)
+*.apk
+*.aab
+.gradle/
+local.properties
+
+# Raw unblurred data & large local artifacts
+data/raw_unblurred/
+*.mp4
+*.mov
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
