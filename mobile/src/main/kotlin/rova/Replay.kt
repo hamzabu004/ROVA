@@ -1,8 +1,28 @@
 package rova
 
-/** Synthetic fixtures only; no actual camera capture, face processing, network or motors. */
+data class ReplayResult(
+    val state: State,
+    val history: List<State>,
+    val observations: List<Observation>,
+    val faceBlurEnabled: Boolean,
+)
+
+object Replay {
+    @JvmStatic
+    fun run(scenario: String): ReplayResult = runReplay(scenario)
+}
+
 fun main(args: Array<String>) {
     val scenario = args.firstOrNull() ?: "correct"
+    val result = Replay.run(scenario)
+    println("REPLAY ONLY | scenario=$scenario | face_blur=${result.faceBlurEnabled}")
+    println(result.history.joinToString(" -> "))
+    result.observations.forEach { println(it) }
+    println("Final state: ${result.state}; observations: ${result.observations.size}")
+}
+
+/** Synthetic responses for both the CLI and Android replay. */
+private fun runReplay(scenario: String): ReplayResult {
     require(scenario in setOf("correct", "mismatch", "closed", "takeover", "blur-off"))
     val transport = SimulatedEsp32()
     val patrol = Patrol(transport)
@@ -25,8 +45,5 @@ fun main(args: Array<String>) {
     }
     check(patrol.state == expectedState) { "Unexpected replay outcome" }
     check(patrol.observations.size == if (expectedState == State.Completed) 1 else 0)
-    println("REPLAY ONLY | scenario=$scenario | face_blur=${task.faceBlurEnabled}")
-    println(patrol.history.joinToString(" -> "))
-    patrol.observations.forEach { println(it) }
-    println("Final state: ${patrol.state}; observations: ${patrol.observations.size}")
+    return ReplayResult(patrol.state, patrol.history, patrol.observations, task.faceBlurEnabled)
 }
