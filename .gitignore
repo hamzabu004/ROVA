@@ -29,6 +29,7 @@ firmware/build/
 *.apk
 *.aab
 .gradle/
+.kotlin/
 local.properties
 
 # Raw unblurred data & large local artifacts

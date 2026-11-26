@@ -42,6 +42,8 @@ The state diagram is also available as a [separate PNG](diagrams/patrol-state-co
 
 ## Phase 2 — Implement one stop in replay
 
+**Development checkpoint:** `mobile/` now contains a Kotlin/JVM single-stop coordinator, simulated command sink, synthetic replay scenarios, and tests. It demonstrates state flow and validates fixture metadata; it does not yet provide actual image evidence, durable storage, an Android app, hardware transport, or live face processing. Phase 2 remains in progress until saved image/map fixtures and the remaining integration are exercised.
+
 Drive the patrol coordinator with a saved map, labelled image fixtures for both blur settings, simulated ESP32 events, and recorded model responses. Use the same state transitions and validation rules that live operation will use. Keep replay results distinguishable from live results.
 
 1. Load the assigned map version and requested room. Issue a simulated move and wait for completion.
