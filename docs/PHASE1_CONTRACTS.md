@@ -1,6 +1,6 @@
 # Phase 1 — Patrol State Machine, Ownership & Message Contracts
 
-This document satisfies the **Phase 1 exit criteria** of [MOBILE_IMPLEMENTATION_PLAN.md](MOBILE_IMPLEMENTATION_PLAN.md) and aligns with [PROPOSAL_v2.md](PROPOSAL_v2.md).
+This document records the Phase 1 contracts for [MOBILE_IMPLEMENTATION_PLAN.md](MOBILE_IMPLEMENTATION_PLAN.md). Local-first operation and optional face blur below supersede the cloud-only and always-blurred assumptions in [PROPOSAL_v2.md](PROPOSAL_v2.md). Handset checks remain to be completed.
 
 ---
 
@@ -13,6 +13,38 @@ This document satisfies the **Phase 1 exit criteria** of [MOBILE_IMPLEMENTATION_
 | **ESP32 Transport** | **Primary: BLE GATT; Wired Alternative/Fallback: USB-C OTG Serial** | OnePlus Nord N10 supports USB Host (OTG) over USB-C (`usb-serial-for-android` for CP2102/CH340/CDC). Both sit behind a single `Esp32Transport` interface in Kotlin. |
 | **Cloud AI Route** | **Phone → Backend Proxy → Provider** | Provider keys (`NEBIUS_API_KEY`, `NVIDIA_API_KEY`) stay on the FastAPI backend; the phone authenticates only with the backend. |
 
+### Local first, cloud later
+
+Start with replay or a backend running on a development computer on the same Wi-Fi/hotspot. Local does not assume that a large VLM runs on the phone.
+
+- **Replay:** Bundled versioned map, recorded perception responses, simulated ESP32, and local observations. No internet or backend required.
+- **Local live:** Phone → authenticated LAN backend → local OCR/detector/model adapter. Console, maps, and evidence storage can also run locally. Missing local capabilities return unavailable/unknown or ask the operator; recorded outputs remain explicitly labelled replay.
+- **Cloud later:** Phone → hosted backend → configured provider and remote storage. A LAN backend calling a hosted model is still cloud perception. WhatsApp requires its external service.
+- Configure `execution_mode: replay | local | cloud`, `backend_base_url`, and `perception_provider: recorded | local | cloud`. Record the effective route with each result. Never silently enable cloud calls after a local failure.
+- Use the computer’s reachable LAN address on the phone, not `localhost`. Live deployment uses authenticated HTTPS; debug HTTP allowances must be limited to the development endpoint.
+- Keep API schemas and pinned map versions identical across routes. Use local storage adapters before Supabase integration, queue observations during disconnects, and defer external notifications when offline.
+- Change routes deliberately while idle. The direct phone–ESP32 link and local safety loop are independent of this choice. The cloud route in the table above is the later deployment option.
+
+### How the ESP32 transport works
+
+The phone coordinates commands; the ESP32 controls motors and reads safety sensors. Images never go to the ESP32. Neither BLE nor USB needs internet.
+
+1. Kotlin uses one `Esp32Transport` interface: `connect()`, `send(command)`, `events`, and `disconnect()`. Simulator, BLE, and USB implementations carry the same commands.
+2. **BLE GATT:** Android is the central/client; ESP32 is the advertising peripheral/server. Define a ROVA service with a command characteristic (write with response) and an event characteristic (notifications). Discover and subscribe before issuing commands; freeze UUIDs in shared protocol configuration during implementation.
+3. **USB-C OTG serial:** Connect the phone as USB host through an OTG/data cable to the board’s supported USB-to-serial interface. Request Android USB permission and open the serial port. Initial protocol setting: 115200 baud, 8 data bits, no parity, 1 stop bit. Verify the actual board driver, cable, and handset before selecting this adapter.
+4. Use UTF-8 newline-delimited JSON, maximum 4096 bytes per message. Buffer until a complete line arrives. BLE fragments messages to the negotiated payload size; USB reads can also split/coalesce messages. Reject oversized/malformed frames.
+5. A successful write is not a motion acknowledgement. ESP32 sends application `ack` within 200 ms, followed by completion/interruption with the same command/session IDs. Reconcile status before retrying; duplicate command IDs cannot execute motion twice.
+6. Send heartbeat every 100 ms. ESP32 stops after 500 ms without a valid heartbeat/manual command, including during autonomous moves. Sensors and E-stop always override motion locally.
+7. Select only one active transport. On disconnect or BLE/USB switching, stop, reconnect, query `get_status`, and reconcile command IDs and position before explicit handback. Never replay queued manual-drive commands.
+
+### Face blur setting
+
+Expose **Face blur: On / Off**, default **On**, configurable before patrol start. Off bypasses face detection/blurring and permits unblurred previews, local storage, perception requests, and evidence uploads on the selected route. Display the setting before starting, including that cloud mode can transmit unblurred images. This is an explicit operator choice, never an automatic fallback after blur failure.
+
+All export paths use one frame-policy interface. Every frame, request, and observation carries `face_blur_enabled` and `privacy_applied: blurred | unblurred`. With On, processing failure withholds the frame; “blurred” records processing, not guaranteed detection of every face. With Off, export is allowed without face processing. Pin the setting for the patrol; changes apply to the next patrol. Queued evidence retains its original metadata. Department recording permissions still apply.
+
+This setting replaces unconditional blur requirements elsewhere in this document: “capture and blur” means apply the pinned frame policy, and “blurred evidence” describes the default-On example.
+
 ### Handset Evaluation Checklist (Run on Target Phone)
 - [ ] CameraX still capture works at mounting height with torch (`enableTorch(true)`) in low-light corridors.
 - [ ] On-device face detection + blur runs in-memory (`ImageProxy` → blurred JPEG) with raw buffers discarded.
@@ -22,6 +54,12 @@ This document satisfies the **Phase 1 exit criteria** of [MOBILE_IMPLEMENTATION_
 ---
 
 ## 2. Patrol State Diagram
+
+[Separate PNG diagram](diagrams/patrol-state-control.png) · [Editable Graphviz source](diagrams/patrol-state-control.dot)
+
+The phone owns these states in replay, local, and cloud modes. Assignment comes from the selected backend (or replay controller). Capture uses the pinned face-blur setting.
+
+Global rules supplement the diagram: takeover from any active state stops/cancels motion and enters ManualTakeover; cancellation stops motion and enters Cancelled; fatal error stops motion and enters Failed. An unreachable controller means stop is unconfirmed until watchdog/status reconciliation. ObstacleWait remembers outbound versus return travel and resumes only reconciled remaining movement; uncertain progress requires operator position confirmation. Recoverable frame/perception failures produce unknown/review; upload failures queue evidence locally before proceeding.
 
 ```mermaid
 stateDiagram-v2
@@ -36,7 +74,7 @@ stateDiagram-v2
     ObstacleWait --> ManualTakeover: "Obstacle timeout / Operator takeover"
 
     MovingToDoor --> ArrivedEstimate: "ESP32 MoveComplete"
-    ArrivedEstimate --> ReadingPlate: "Capture & blur plate frame"
+    ArrivedEstimate --> ReadingPlate: "Capture with pinned blur setting"
     ReadingPlate --> VerifyingPlace: "Plate read (or unreadable)"
     VerifyingPlace --> InspectingDoor: "Place verified (match)"
     VerifyingPlace --> UncertainLocation: "Mismatch / None / Error"
@@ -81,12 +119,12 @@ stateDiagram-v2
 | Patrol state transitions, stop sequencing, place verification decision | **Phone** | Runs the deterministic state machine; never lets a late reply resume a suspended/taken-over patrol. |
 | Bounded motion (`move_edge`, `turn`, `face_door`, `return_home`) | **ESP32** | Executes timed/IMU-closed-loop moves and reports completion or interruption. |
 | Speed limit, obstacle stop, bumper/downward-sensor halt, watchdog, E-stop | **ESP32** | Always enforced locally on ESP32, **including during manual control**. |
-| Face blurring & privacy gate | **Phone** | Raw frames stay transient; if blur fails, frame is withheld and error is raised. |
-| VLM calls & `pgvector` candidate retrieval | **Backend Proxy** | Holds API keys, logs to Langfuse, enforces schema/timeout. |
+| Face blurring & privacy gate | **Phone** | Enforces the pinned On/Off setting. With On, processing failure withholds export; with Off, unblurred export is allowed and labelled. |
+| Perception & candidate retrieval | **Selected local/cloud backend** | Uses configured local/cloud adapters, keeps any provider keys off the phone, and enforces schema/timeout. |
 
 ### Manual Control Priority
-1. **Immediate preemption:** Any `Takeover` command from the Backend increments `control_session_id` and immediately switches the Phone state to `ManualTakeover`.
-2. **In-flight invalidation:** The Phone sends `cancel_motion` to the ESP32 and increments its active `control_session_id`. Any late perception response or `MoveComplete` from an older `control_session_id` or `stop_id` is **discarded**.
+1. **Immediate preemption:** The selected backend alone allocates the next `control_session_id` on takeover/handback (the replay controller emulates it). The phone adopts the supplied value and immediately enters `ManualTakeover` on takeover.
+2. **In-flight invalidation:** The Phone sends `cancel_motion` to the ESP32 using the supplied session ID, without incrementing it again. Any late perception response or `MoveComplete` from an older `control_session_id` or `stop_id` is **discarded**.
 3. **Expiring manual commands:** Manual drive commands (`forward`, `backward`, `turn_left`, `turn_right`, `stop`) carry `issued_at_ms` and `ttl_ms` (default `400 ms`). The Phone drops expired commands before relaying; the ESP32 watchdog halts motors if no valid command arrives within `500 ms`.
 4. **Explicit handback:** Autonomous control resumes only on an explicit `Handback` message with a confirmed `current_node_id` (or `return_home` target).
 
@@ -210,7 +248,7 @@ All messages use JSON over UTF-8 with ISO-8601 timestamps or Unix epoch millisec
 
 ### 5.3 Phone ↔ Perception Service (Backend Proxy)
 - **Operations:** `read_plate`, `verify_place`, `inspect_door`.
-- **Privacy:** Only on-device blurred images (`frame_id`, `image_b64` or uploaded `evidence_ref`) are sent.
+- **Frame policy:** Apply the pinned On/Off setting before sending `image_b64` or uploading `evidence_ref`. Include `face_blur_enabled`, `privacy_applied`, `execution_mode`, and `perception_provider` on requests and observations. Off permits explicitly labelled unblurred images. Section 5 examples show the default-On cloud route; local adapters use the same schema.
 - **Timeouts & Retries:** `10 s` timeout per call; max `1` retry on network/malformed JSON, then fallback model or explicit `status: "failed" | "cannot_determine"`.
 
 ```json
@@ -279,6 +317,8 @@ All messages use JSON over UTF-8 with ISO-8601 timestamps or Unix epoch millisec
 ---
 
 ## 6. Minimal Backend Dependency for Phase 4
+
+Run the first live test against the LAN backend with a local perception adapter, then optionally repeat with the hosted backend/provider. Both expose the endpoints below and accept frame-policy/execution metadata from section 5.3. Local map/evidence adapters can precede Supabase. Replay uses fixtures and needs none of these services. An unavailable local model must abstain rather than silently call the cloud.
 
 To run the **Phase 4 first live cloud test** (stationary phone → blurred plate photo → `read_plate` → local map check) without waiting for the full console or ESP32:
 1. `POST /api/v1/perception/read-plate` (FastAPI) accepting `{ request_id, frame_id, image_b64, model }` and proxying to Nebius (`Nemotron 3.5 Super VL`) / NVIDIA (`Cosmos 3 Nano Reasoner`).

@@ -1,0 +1,47 @@
+// Regenerate: dot -Tpng -Gdpi=160 docs/diagrams/patrol-state-control.dot -o docs/diagrams/patrol-state-control.png
+digraph Patrol {
+  graph [rankdir=TB, bgcolor="#f6f8fc", pad=0.4, nodesep=0.35, ranksep=0.55,
+    fontname="Arial", fontsize=22, labelloc=t,
+    label="ROVA | Patrol state control\nPhone coordinator • Replay / Local / Cloud"];
+  node [shape=box, style="rounded,filled", fillcolor="#e3edff", color="#5475ac", fontname="Arial", fontsize=12, margin="0.18,0.12"];
+  edge [fontname="Arial", fontsize=10, color="#58677e", arrowsize=0.7];
+  Idle -> SyncingMap [label="Assign patrol"];
+  SyncingMap [label="SyncingMap\nPin map, route and blur setting"];
+  SyncingMap -> MovingToDoor [label="Ready"];
+  SyncingMap -> Failed [label="Map failure"];
+  MovingToDoor -> ArrivedEstimate [label="Motion complete"];
+  ArrivedEstimate -> ReadingPlate [label="Capture with pinned frame policy"];
+  ReadingPlate -> VerifyingPlace [label="Plate result / unreadable"];
+  VerifyingPlace -> InspectingDoor [label="Verified match"];
+  VerifyingPlace -> UncertainLocation [label="Mismatch / none / error"];
+  UncertainLocation [fillcolor="#fff0cb"];
+  UncertainLocation -> ReadingPlate [label="Recheck"];
+  UncertainLocation -> InspectingDoor [label="Operator confirms"];
+  UncertainLocation -> NextOrHome [label="Skip"];
+  InspectingDoor -> RecordingEvidence [label="Validated result / abstention"];
+  RecordingEvidence [label="RecordingEvidence\nFrame + verified room + blur/route metadata"];
+  RecordingEvidence -> NextOrHome [label="Stored locally / queued / uploaded"];
+  NextOrHome -> MovingToDoor [label="More rooms"];
+  NextOrHome -> ReturningHome [label="All stops processed"];
+  ReturningHome -> Completed [label="Home arrival confirmed"];
+  MovingToDoor -> ObstacleWait [label="Sensor stop"];
+  ReturningHome -> ObstacleWait [label="Sensor stop"];
+  ObstacleWait [fillcolor="#fff0cb", label="ObstacleWait\nRemember interrupted leg"];
+  ObstacleWait -> MovingToDoor [label="Clear + reconciled outbound remainder"];
+  ObstacleWait -> ReturningHome [label="Clear + reconciled return remainder"];
+  ObstacleWait -> ManualTakeover [label="Timeout / uncertain position"];
+  ManualTakeover [fillcolor="#fff0cb", label="ManualTakeover\nAutonomy suspended; stale replies ignored"];
+  ManualTakeover -> MovingToDoor [label="Explicit handback + confirmed position"];
+  ManualTakeover -> ReturningHome [label="Explicit handback: return"];
+  Global [shape=note, fillcolor="#fce4e6", color="#bc6972", label="GLOBAL INTERRUPTS • every active state\nTakeover → stop/cancel → ManualTakeover\nCancel → stop → Cancelled\nFatal error → stop → Failed\nUnreachable controller: stop unconfirmed until reconciled"];
+  Global -> ManualTakeover [style=dashed];
+  Global -> Cancelled [style=dashed];
+  Global -> Failed [style=dashed];
+  Policy [shape=note, fillcolor="#e2f2ec", color="#5d9584", label="FRAME / SERVICE POLICY\nBlur On (default): processing failure blocks export\nBlur Off: labelled unblurred output allowed\nPerception unavailable: unknown / review\nUpload unavailable: queue locally\nNo automatic local-to-cloud switch"];
+  Safety [shape=note, fillcolor="#e2f2ec", color="#5d9584", label="ESP32 • independent local safety\nBLE or USB direct link; one active adapter\nHeartbeat 100 ms; watchdog stop 500 ms\nSensor stop / speed limit / E-stop always active\nResume only reconciled remaining movement"];
+  {rank=same; Global; Idle; Policy;}
+  {rank=same; Completed; Cancelled; Failed; Safety;}
+  Completed [fillcolor="#d5eddf", shape=doublecircle];
+  Cancelled [fillcolor="#fce4e6"];
+  Failed [fillcolor="#fce4e6"];
+}
